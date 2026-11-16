@@ -345,7 +345,7 @@ function renderLane() {
   }
   state.photos.forEach((photo) => {
     lane.append(el("figure", { class: "photo-card", "data-open": photo.id }, [
-      el("img", { src: `/uploads/${encodeURIComponent(photo.file)}`, alt: photo.caption || "Memory" }),
+      el("img", { src: photo.url || `/uploads/${encodeURIComponent(photo.file)}`, alt: photo.caption || "Memory" }),
       el("figcaption", {}, photo.caption || "Untitled"),
       el("p", { class: "meta" }, [photo.era, photo.by].filter(Boolean).join(" · ")),
       el("button", { type: "button", class: "mini", "data-remove": "photos", "data-id": photo.id }, "Remove")
@@ -368,14 +368,191 @@ function renderFiles() {
         el("p", { class: "byline" }, `${file.by} · ${formatBytes(file.size)}`)
       ]),
       el("div", { class: "folder-actions" }, [
-        el("a", { href: `/uploads/${encodeURIComponent(file.file)}`, download: file.name }, "Download"),
+        el("a", { href: file.url || `/uploads/${encodeURIComponent(file.file)}`, download: file.name }, "Download"),
         el("button", { type: "button", class: "mini", "data-remove": "files", "data-id": file.id }, "Remove")
       ])
     ]));
   });
 }
 
+const LOCAL_KEY = "dbc-local";
+let localMode = false;
+
+function blankState() {
+  return { dishes: [], photos: [], files: [], rsvps: [], thanks: [] };
+}
+
+function readLocal() {
+  try {
+    return { ...blankState(), ...JSON.parse(localStorage.getItem(LOCAL_KEY) || "{}") };
+  } catch {
+    return blankState();
+  }
+}
+
+function writeLocal(next) {
+  const copy = {
+    dishes: next.dishes || [],
+    photos: (next.photos || []).map(({ url, ...item }) => item),
+    files: (next.files || []).map(({ url, ...item }) => item),
+    rsvps: next.rsvps || [],
+    thanks: next.thanks || []
+  };
+  localStorage.setItem(LOCAL_KEY, JSON.stringify(copy));
+}
+
+function blobDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("dbc-blobs", 1);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains("blobs")) req.result.createObjectStore("blobs");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function blobPut(id, blob) {
+  return blobDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction("blobs", "readwrite");
+    tx.objectStore("blobs").put(blob, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+function blobGet(id) {
+  return blobDb().then((db) => new Promise((resolve, reject) => {
+    const req = db.transaction("blobs", "readonly").objectStore("blobs").get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
+function blobDel(id) {
+  return blobDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction("blobs", "readwrite");
+    tx.objectStore("blobs").delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+async function hydrateLocal(store) {
+  const next = { ...blankState(), ...store };
+  for (const photo of next.photos) {
+    const blob = await blobGet(photo.file).catch(() => null);
+    if (blob) photo.url = URL.createObjectURL(blob);
+  }
+  for (const file of next.files) {
+    const blob = await blobGet(file.file).catch(() => null);
+    if (blob) file.url = URL.createObjectURL(blob);
+  }
+  return next;
+}
+
+async function enterLocal() {
+  localMode = true;
+  serverOk = false;
+  useState(await hydrateLocal(readLocal()));
+}
+
+async function localPost(url, payload) {
+  const store = readLocal();
+  if (url === "/api/dishes") {
+    const dish = String(payload.dish || "").trim();
+    const result = window.DishCheck.inspect(store.dishes, dish);
+    if (result.status === "duplicate" || result.status === "similar") {
+      const error = new Error(`${result.conflict.by} already claimed ${result.conflict.dish}.`);
+      error.status = 409;
+      error.payload = { state: store };
+      throw error;
+    }
+    if (result.status !== "clear") {
+      const error = new Error("Name the dish.");
+      error.status = 400;
+      throw error;
+    }
+    store.dishes.push({
+      id: crypto.randomUUID(),
+      by: payload.by,
+      dish,
+      note: String(payload.note || "").trim(),
+      category: payload.category,
+      createdAt: new Date().toISOString()
+    });
+  } else if (url === "/api/rsvps") {
+    const by = String(payload.by || "").trim();
+    const existing = store.rsvps.find((seat) => seat.by.trim().toLowerCase() === by.toLowerCase());
+    if (existing) {
+      existing.status = payload.status;
+      existing.note = String(payload.note || "").trim();
+    } else {
+      store.rsvps.push({
+        id: crypto.randomUUID(),
+        by,
+        status: payload.status,
+        note: String(payload.note || "").trim(),
+        createdAt: new Date().toISOString()
+      });
+    }
+  }
+  writeLocal(store);
+  return { state: await hydrateLocal(store) };
+}
+
+async function localUpload(url, formData) {
+  const store = readLocal();
+  const by = String(formData.get("by") || "").trim();
+  if (url === "/api/photos") {
+    const caption = String(formData.get("caption") || "").trim();
+    const era = String(formData.get("era") || "").trim();
+    for (const file of formData.getAll("photos")) {
+      if (!(file instanceof File)) continue;
+      const id = crypto.randomUUID();
+      await blobPut(id, file);
+      store.photos.push({
+        id,
+        file: id,
+        by,
+        caption,
+        era,
+        createdAt: new Date().toISOString(),
+        url: URL.createObjectURL(file)
+      });
+    }
+  } else if (url === "/api/files") {
+    for (const file of formData.getAll("files")) {
+      if (!(file instanceof File)) continue;
+      const id = crypto.randomUUID();
+      await blobPut(id, file);
+      store.files.push({
+        id,
+        file: id,
+        name: file.name,
+        by,
+        size: file.size,
+        createdAt: new Date().toISOString(),
+        url: URL.createObjectURL(file)
+      });
+    }
+  }
+  writeLocal(store);
+  return { state: store };
+}
+
+async function localRemove(kind, id) {
+  const store = readLocal();
+  const list = store[kind] || [];
+  const item = list.find((entry) => entry.id === id);
+  store[kind] = list.filter((entry) => entry.id !== id);
+  if (item && (kind === "photos" || kind === "files")) await blobDel(item.file).catch(() => {});
+  writeLocal(store);
+  return hydrateLocal(store);
+}
+
 async function postJSON(url, payload) {
+  if (localMode) return localPost(url, payload);
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -392,6 +569,10 @@ async function postJSON(url, payload) {
 }
 
 function upload(url, formData, onProgress) {
+  if (localMode) {
+    if (onProgress) onProgress(1);
+    return localUpload(url, formData);
+  }
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
@@ -427,18 +608,24 @@ function useState(next) {
 }
 
 async function refresh() {
+  if (localMode) return;
   try {
     const res = await fetch("/api/state");
     if (!res.ok) throw new Error("offline");
-    useState(await res.json());
+    const data = await res.json();
+    if (!Array.isArray(data.dishes)) throw new Error("offline");
     serverOk = true;
+    useState(data);
   } catch {
-    if (serverOk) toast("The clubhouse server isn't answering.");
-    serverOk = false;
+    await enterLocal();
   }
 }
 
 async function removeItem(kind, id) {
+  if (localMode) {
+    useState(await localRemove(kind, id));
+    return;
+  }
   const res = await fetch(`/api/${kind}/${id}`, { method: "DELETE" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || "That one stayed put.");
@@ -532,7 +719,7 @@ function wireDrop(zone, input, browse, onFiles) {
 }
 
 function openLightbox(photo) {
-  $("#lightbox-img").src = `/uploads/${encodeURIComponent(photo.file)}`;
+  $("#lightbox-img").src = photo.url || `/uploads/${encodeURIComponent(photo.file)}`;
   $("#lightbox-img").alt = photo.caption;
   $("#lightbox-cap").textContent = [photo.caption, photo.era, photo.by].filter(Boolean).join(" · ");
   $("#lightbox").hidden = false;
