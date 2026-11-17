@@ -504,12 +504,14 @@ function bind() {
     const dish = $("#dish-name").value.trim();
     const result = window.DishCheck.inspect(state.dishes, dish);
     if (result.status === "duplicate" || result.status === "similar") {
-      flashStamp("Already claimed");
+      toast(`${result.conflict.by} already claimed ${result.conflict.dish}.`);
       liveCheck();
       return;
     }
     if (result.status !== "clear") {
-      flashStamp("Name the dish");
+      toast(result.status === "vague" ? "Use the full name of the dish." : "Name the dish first. The note is only a detail.");
+      shake($("#dish-name"));
+      $("#dish-name").focus();
       liveCheck();
       return;
     }
