@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <meta name="theme-color" content="#f6efe4">
-  <meta name="description" content="Da Booty Club Friendsgiving. Claim a dish, pin a memory, drop the slides.">
+  <meta name="description" content="Da Booty Club Friendsgiving. Claim a dish and save your seat.">
   <title>Da Booty Club · Friendsgiving</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,8 +45,6 @@
     <nav aria-label="Sections">
       <a href="#table">Table</a>
       <a href="#spread">Menu</a>
-      <a href="#lane-section">Photos</a>
-      <a href="#deck-section">Files</a>
     </nav>
     <p class="stats" id="stats">Setting the table…</p>
   </header>
@@ -55,7 +53,7 @@
       <div class="section-head">
         <p class="eyebrow">The table</p>
         <h2>Who's coming.</h2>
-        <p>Your name in the header stays with your seat, your dish, and your photos.</p>
+        <p>Your name in the header stays with your seat and your dish.</p>
       </div>
       <div class="split">
         <form id="rsvp-form" class="panel">
@@ -108,51 +106,6 @@
       </div>
     </section>
 
-    <section id="lane-section" class="wrap band">
-      <div class="section-head">
-        <p class="eyebrow">Memory lane</p>
-        <h2>The pictures.</h2>
-        <p>Add them whenever you're ready.</p>
-      </div>
-      <form id="photo-form" class="composer">
-        <div class="drop" id="photo-drop">
-          <input id="photo-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
-          <p><strong>Add photos</strong></p>
-          <p class="fine"><button type="button" class="text-btn" id="photo-browse">Browse</button> · JPG, PNG, WEBP, or GIF</p>
-        </div>
-        <div id="photo-preview" class="previews"></div>
-        <div class="composer-fields">
-          <label>Caption
-            <input id="photo-caption" maxlength="140" placeholder="Last year">
-          </label>
-          <label>When
-            <input id="photo-era" maxlength="40" placeholder="2024">
-          </label>
-        </div>
-        <button class="btn" type="submit">Add to the lane</button>
-        <div class="progress" id="photo-progress" hidden><span></span></div>
-      </form>
-      <div class="photo-grid" id="lane"></div>
-    </section>
-
-    <section id="deck-section" class="wrap band">
-      <div class="section-head">
-        <p class="eyebrow">Files</p>
-        <h2>The deck.</h2>
-        <p>PowerPoint, Keynote, PDF, or Word.</p>
-      </div>
-      <form id="file-form" class="composer">
-        <div class="drop" id="file-drop">
-          <input id="file-input" type="file" accept=".ppt,.pptx,.pps,.ppsx,.pdf,.key,.doc,.docx" multiple hidden>
-          <p><strong>Add a file</strong></p>
-          <p class="fine"><button type="button" class="text-btn" id="file-browse">Browse</button> · up to 25MB</p>
-        </div>
-        <div id="file-preview" class="previews"></div>
-        <button class="btn" type="submit">Add the file</button>
-        <div class="progress" id="file-progress" hidden><span></span></div>
-      </form>
-      <div class="file-list" id="folders"></div>
-    </section>
   </main>
 
   <footer class="footer">
@@ -162,13 +115,6 @@
   </footer>
 
   <div id="toasts" aria-live="polite"></div>
-  <div id="lightbox" class="lightbox" hidden>
-    <button type="button" class="lightbox-close">Close</button>
-    <figure>
-      <img alt="" id="lightbox-img">
-      <figcaption id="lightbox-cap"></figcaption>
-    </figure>
-  </div>
 
   <script src="firebase-config.js"></script>
   <script src="dish-check.js"></script>

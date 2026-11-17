@@ -2,7 +2,7 @@
   "name": "dabooty",
   "version": "1.0.0",
   "private": true,
-  "description": "Da Booty Club Friendsgiving — claim a dish, pin a memory, drop the slides.",
+  "description": "Da Booty Club Friendsgiving — claim a dish and save a seat.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

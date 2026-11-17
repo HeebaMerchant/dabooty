@@ -22,9 +22,6 @@ let clashId = "";
 let serverOk = true;
 let booted = false;
 let seenDishes = new Set();
-let photoQueue = [];
-let fileQueue = [];
-let photoUrls = [];
 let suppressClick = false;
 let lastCountMinute = "";
 let lastSnapshot = "";
@@ -160,24 +157,10 @@ function shortDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatBytes(size) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
 function tilt(id) {
   let hash = 0;
   for (const char of String(id)) hash = (hash * 33 + char.charCodeAt(0)) % 997;
   return `${(hash % 7) - 3}deg`;
-}
-
-function fileKind(name) {
-  const ext = String(name).split(".").pop().toLowerCase();
-  if (["ppt", "pptx", "pps", "ppsx"].includes(ext)) return "PPT";
-  if (ext === "pdf") return "PDF";
-  if (ext === "key") return "KEY";
-  return "DOC";
 }
 
 function setCategory(next) {
@@ -244,8 +227,6 @@ function render() {
   renderSeats();
   renderIdeas();
   renderDishes();
-  renderLane();
-  renderFiles();
   liveCheck();
   seenDishes = new Set(state.dishes.map((dish) => dish.id));
   booted = true;
@@ -259,9 +240,7 @@ function renderStats() {
   const coming = state.rsvps.filter((seat) => seat.status === "in").length;
   $("#stats").textContent = [
     countLabel(coming, "coming", "coming"),
-    countLabel(state.dishes.length, "dish", "dishes"),
-    countLabel(state.photos.length, "memory", "memories"),
-    countLabel(state.files.length, "deck", "decks")
+    countLabel(state.dishes.length, "dish", "dishes")
   ].join(" · ");
 }
 
@@ -336,45 +315,6 @@ function renderDishes() {
   });
 }
 
-function renderLane() {
-  const lane = $("#lane");
-  lane.replaceChildren();
-  if (!state.photos.length) {
-    lane.append(el("p", { class: "empty-card" }, "No photos yet."));
-    return;
-  }
-  state.photos.forEach((photo) => {
-    lane.append(el("figure", { class: "photo-card", "data-open": photo.id }, [
-      el("img", { src: photo.url || `/uploads/${encodeURIComponent(photo.file)}`, alt: photo.caption || "Memory" }),
-      el("figcaption", {}, photo.caption || "Untitled"),
-      el("p", { class: "meta" }, [photo.era, photo.by].filter(Boolean).join(" · ")),
-      el("button", { type: "button", class: "mini", "data-remove": "photos", "data-id": photo.id }, "Remove")
-    ]));
-  });
-}
-
-function renderFiles() {
-  const box = $("#folders");
-  box.replaceChildren();
-  if (!state.files.length) {
-    box.append(el("p", { class: "empty-card" }, "No files yet."));
-    return;
-  }
-  [...state.files].reverse().forEach((file) => {
-    box.append(el("article", { class: "file-row" }, [
-      el("div", {}, [
-        el("span", { class: "file-kind" }, fileKind(file.name)),
-        el("strong", {}, file.name),
-        el("p", { class: "byline" }, `${file.by} · ${formatBytes(file.size)}`)
-      ]),
-      el("div", { class: "folder-actions" }, [
-        el("a", { href: file.url || `/uploads/${encodeURIComponent(file.file)}`, download: file.name }, "Download"),
-        el("button", { type: "button", class: "mini", "data-remove": "files", "data-id": file.id }, "Remove")
-      ])
-    ]));
-  });
-}
-
 const LOCAL_KEY = "dbc-local";
 let localMode = false;
 let cloudMode = false;
@@ -402,54 +342,8 @@ function writeLocal(next) {
   localStorage.setItem(LOCAL_KEY, JSON.stringify(copy));
 }
 
-function blobDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("dbc-blobs", 1);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains("blobs")) req.result.createObjectStore("blobs");
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function blobPut(id, blob) {
-  return blobDb().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction("blobs", "readwrite");
-    tx.objectStore("blobs").put(blob, id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  }));
-}
-
-function blobGet(id) {
-  return blobDb().then((db) => new Promise((resolve, reject) => {
-    const req = db.transaction("blobs", "readonly").objectStore("blobs").get(id);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  }));
-}
-
-function blobDel(id) {
-  return blobDb().then((db) => new Promise((resolve, reject) => {
-    const tx = db.transaction("blobs", "readwrite");
-    tx.objectStore("blobs").delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  }));
-}
-
-async function hydrateLocal(store) {
-  const next = { ...blankState(), ...store };
-  for (const photo of next.photos) {
-    const blob = await blobGet(photo.file).catch(() => null);
-    if (blob) photo.url = URL.createObjectURL(blob);
-  }
-  for (const file of next.files) {
-    const blob = await blobGet(file.file).catch(() => null);
-    if (blob) file.url = URL.createObjectURL(blob);
-  }
-  return next;
+function hydrateLocal(store) {
+  return { ...blankState(), ...store };
 }
 
 async function enterLocal() {
@@ -502,52 +396,10 @@ async function localPost(url, payload) {
   return { state: await hydrateLocal(store) };
 }
 
-async function localUpload(url, formData) {
-  const store = readLocal();
-  const by = String(formData.get("by") || "").trim();
-  if (url === "/api/photos") {
-    const caption = String(formData.get("caption") || "").trim();
-    const era = String(formData.get("era") || "").trim();
-    for (const file of formData.getAll("photos")) {
-      if (!(file instanceof File)) continue;
-      const id = crypto.randomUUID();
-      await blobPut(id, file);
-      store.photos.push({
-        id,
-        file: id,
-        by,
-        caption,
-        era,
-        createdAt: new Date().toISOString(),
-        url: URL.createObjectURL(file)
-      });
-    }
-  } else if (url === "/api/files") {
-    for (const file of formData.getAll("files")) {
-      if (!(file instanceof File)) continue;
-      const id = crypto.randomUUID();
-      await blobPut(id, file);
-      store.files.push({
-        id,
-        file: id,
-        name: file.name,
-        by,
-        size: file.size,
-        createdAt: new Date().toISOString(),
-        url: URL.createObjectURL(file)
-      });
-    }
-  }
-  writeLocal(store);
-  return { state: store };
-}
-
-async function localRemove(kind, id) {
+function localRemove(kind, id) {
   const store = readLocal();
   const list = store[kind] || [];
-  const item = list.find((entry) => entry.id === id);
   store[kind] = list.filter((entry) => entry.id !== id);
-  if (item && (kind === "photos" || kind === "files")) await blobDel(item.file).catch(() => {});
   writeLocal(store);
   return hydrateLocal(store);
 }
@@ -580,33 +432,6 @@ async function postJSON(url, payload) {
     throw error;
   }
   return data;
-}
-
-function upload(url, formData, onProgress) {
-  if (cloudMode) return window.DaCloud.upload(url, formData, onProgress);
-  if (localMode) {
-    if (onProgress) onProgress(1);
-    return localUpload(url, formData);
-  }
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", url);
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
-    };
-    xhr.onload = () => {
-      let body = {};
-      try { body = JSON.parse(xhr.responseText); } catch { body = {}; }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-      else {
-        const error = new Error(body.message || "The upload dropped. Try again.");
-        error.payload = body;
-        reject(error);
-      }
-    };
-    xhr.onerror = () => reject(new Error("The upload dropped. Try again."));
-    xhr.send(formData);
-  });
 }
 
 function useState(next) {
@@ -649,104 +474,6 @@ async function removeItem(kind, id) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || "That one stayed put.");
   useState(data.state);
-}
-
-function stagePhotos(files) {
-  files.forEach((file) => {
-    const ext = file.name.split(".").pop().toLowerCase();
-    const okType = ["jpg", "jpeg", "png", "webp", "gif"].includes(ext) || file.type.startsWith("image/");
-    if (!okType || file.type === "image/svg+xml") {
-      toast("Use a JPG, PNG, WEBP, or GIF so everyone can see it.");
-      return;
-    }
-    photoQueue.push(file);
-  });
-  photoQueue = photoQueue.slice(0, 8);
-  renderPhotoQueue();
-}
-
-function renderPhotoQueue() {
-  photoUrls.forEach((url) => URL.revokeObjectURL(url));
-  photoUrls = [];
-  const box = $("#photo-preview");
-  box.replaceChildren();
-  photoQueue.forEach((file, index) => {
-    const url = URL.createObjectURL(file);
-    photoUrls.push(url);
-    box.append(el("div", { class: "preview" }, [
-      el("img", { src: url, alt: "" }),
-      el("button", { type: "button", class: "mini", onclick: () => { photoQueue.splice(index, 1); renderPhotoQueue(); } }, "Remove")
-    ]));
-  });
-}
-
-function renderFileQueue() {
-  const box = $("#file-preview");
-  box.replaceChildren();
-  fileQueue.forEach((file, index) => {
-    box.append(el("div", { class: "preview" }, [
-      el("span", {}, file.name),
-      el("button", {
-        type: "button",
-        class: "mini",
-        onclick: () => {
-          fileQueue.splice(index, 1);
-          renderFileQueue();
-        }
-      }, "Remove")
-    ]));
-  });
-}
-
-function stageFiles(files) {
-  const allowed = ["ppt", "pptx", "pps", "ppsx", "pdf", "key", "doc", "docx"];
-  files.forEach((file) => {
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (!allowed.includes(ext)) {
-      toast("Bring a PowerPoint, Keynote, PDF, or Word file.");
-      return;
-    }
-    fileQueue.push(file);
-  });
-  fileQueue = fileQueue.slice(0, 6);
-  renderFileQueue();
-}
-
-function wireDrop(zone, input, browse, onFiles) {
-  browse.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    input.click();
-  });
-  zone.addEventListener("click", () => input.click());
-  ["dragenter", "dragover"].forEach((type) => {
-    zone.addEventListener(type, (event) => {
-      event.preventDefault();
-      zone.classList.add("is-hot");
-    });
-  });
-  zone.addEventListener("dragleave", () => zone.classList.remove("is-hot"));
-  zone.addEventListener("drop", (event) => {
-    event.preventDefault();
-    zone.classList.remove("is-hot");
-    onFiles([...event.dataTransfer.files]);
-  });
-  input.addEventListener("change", () => {
-    onFiles([...input.files]);
-    input.value = "";
-  });
-}
-
-function openLightbox(photo) {
-  $("#lightbox-img").src = photo.url || `/uploads/${encodeURIComponent(photo.file)}`;
-  $("#lightbox-img").alt = photo.caption;
-  $("#lightbox-cap").textContent = [photo.caption, photo.era, photo.by].filter(Boolean).join(" · ");
-  $("#lightbox").hidden = false;
-}
-
-function closeLightbox() {
-  $("#lightbox").hidden = true;
-  $("#lightbox-img").removeAttribute("src");
 }
 
 function bind() {
@@ -851,70 +578,6 @@ function bind() {
     }
   });
 
-  wireDrop($("#photo-drop"), $("#photo-input"), $("#photo-browse"), stagePhotos);
-  wireDrop($("#file-drop"), $("#file-input"), $("#file-browse"), stageFiles);
-
-  $("#photo-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const by = requireName();
-    if (!by) return;
-    if (!photoQueue.length) {
-      toast("Add a photo to pin.");
-      return;
-    }
-    const data = new FormData();
-    data.set("by", by);
-    data.set("caption", $("#photo-caption").value);
-    data.set("era", $("#photo-era").value);
-    photoQueue.forEach((file) => data.append("photos", file));
-    const bar = $("#photo-progress");
-    bar.hidden = false;
-    bar.firstElementChild.style.width = "0%";
-    try {
-      const body = await upload("/api/photos", data, (ratio) => {
-        bar.firstElementChild.style.width = `${Math.round(ratio * 100)}%`;
-      });
-      photoQueue = [];
-      renderPhotoQueue();
-      $("#photo-caption").value = "";
-      useState(body.state);
-      toast("Photo added.");
-    } catch (error) {
-      toast(error.message);
-    } finally {
-      setTimeout(() => { bar.hidden = true; }, 400);
-    }
-  });
-
-  $("#file-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const by = requireName();
-    if (!by) return;
-    if (!fileQueue.length) {
-      toast("Choose a file first.");
-      return;
-    }
-    const data = new FormData();
-    data.set("by", by);
-    fileQueue.forEach((file) => data.append("files", file));
-    const bar = $("#file-progress");
-    bar.hidden = false;
-    bar.firstElementChild.style.width = "0%";
-    try {
-      const body = await upload("/api/files", data, (ratio) => {
-        bar.firstElementChild.style.width = `${Math.round(ratio * 100)}%`;
-      });
-      fileQueue = [];
-      renderFileQueue();
-      useState(body.state);
-      toast("File added.");
-    } catch (error) {
-      toast(error.message);
-    } finally {
-      setTimeout(() => { bar.hidden = true; }, 400);
-    }
-  });
-
   document.body.addEventListener("click", async (event) => {
     const btn = event.target.closest("[data-remove]");
     if (!btn) return;
@@ -934,30 +597,6 @@ function bind() {
     } catch (error) {
       toast(error.message);
     }
-  });
-
-  $("#lane").addEventListener("click", (event) => {
-    if (event.target.closest("button")) return;
-    const card = event.target.closest("[data-open]");
-    if (!card) return;
-    const photo = state.photos.find((item) => item.id === card.dataset.open);
-    if (photo) openLightbox(photo);
-  });
-
-  $("#lightbox").addEventListener("click", (event) => {
-    if (event.target === $("#lightbox") || event.target.closest(".lightbox-close")) closeLightbox();
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeLightbox();
-  });
-
-  document.addEventListener("paste", (event) => {
-    const images = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/") && file.type !== "image/svg+xml");
-    if (!images.length) return;
-    event.preventDefault();
-    stagePhotos(images);
-    $("#lane-section").scrollIntoView({ behavior: "smooth", block: "center" });
-    toast("Photo ready. Add a caption, then save it.");
   });
 
   const links = [...document.querySelectorAll(".bar nav a")];
