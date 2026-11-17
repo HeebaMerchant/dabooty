@@ -264,6 +264,18 @@ button { cursor: pointer; }
   color: var(--muted);
 }
 
+.peach {
+  display: inline-block;
+  margin-left: 0.15rem;
+  transform-origin: 50% 70%;
+  animation: peach-shake 0.55s ease-in-out infinite;
+}
+
+@keyframes peach-shake {
+  0%, 100% { transform: rotate(-12deg) translateX(-1px); }
+  50% { transform: rotate(14deg) translateX(2px); }
+}
+
 .landing-actions {
   position: relative;
   z-index: 1;
