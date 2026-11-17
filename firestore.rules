@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function tableOk(data) {
+      return data.keys().hasOnly(['dishes', 'photos', 'files', 'rsvps', 'thanks'])
+        && data.dishes.size() <= 80
+        && data.photos.size() <= 40
+        && data.files.size() <= 30
+        && data.rsvps.size() <= 80
+        && data.thanks.size() <= 40;
+    }
+
+    match /potluck/{id} {
+      allow read: if true;
+      allow create, update: if tableOk(request.resource.data);
+      allow delete: if false;
+    }
+  }
+}

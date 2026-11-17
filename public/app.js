@@ -377,6 +377,7 @@ function renderFiles() {
 
 const LOCAL_KEY = "dbc-local";
 let localMode = false;
+let cloudMode = false;
 
 function blankState() {
   return { dishes: [], photos: [], files: [], rsvps: [], thanks: [] };
@@ -551,7 +552,20 @@ async function localRemove(kind, id) {
   return hydrateLocal(store);
 }
 
+async function enterCloud() {
+  cloudMode = true;
+  serverOk = true;
+  try {
+    await window.DaCloud.start((next) => useState(next));
+  } catch {
+    cloudMode = false;
+    await enterLocal();
+    toast("The shared table isn't open yet. This browser is keeping its own copy.");
+  }
+}
+
 async function postJSON(url, payload) {
+  if (cloudMode) return window.DaCloud.post(url, payload);
   if (localMode) return localPost(url, payload);
   const res = await fetch(url, {
     method: "POST",
@@ -569,6 +583,7 @@ async function postJSON(url, payload) {
 }
 
 function upload(url, formData, onProgress) {
+  if (cloudMode) return window.DaCloud.upload(url, formData, onProgress);
   if (localMode) {
     if (onProgress) onProgress(1);
     return localUpload(url, formData);
@@ -608,7 +623,7 @@ function useState(next) {
 }
 
 async function refresh() {
-  if (localMode) return;
+  if (cloudMode || localMode) return;
   try {
     const res = await fetch("/api/state");
     if (!res.ok) throw new Error("offline");
@@ -622,6 +637,10 @@ async function refresh() {
 }
 
 async function removeItem(kind, id) {
+  if (cloudMode) {
+    useState(await window.DaCloud.remove(kind, id));
+    return;
+  }
   if (localMode) {
     useState(await localRemove(kind, id));
     return;
@@ -985,7 +1004,8 @@ function boot() {
   bindScroll();
   renderCountdown();
   setInterval(renderCountdown, 1000);
-  refresh();
+  if (window.DaCloud && window.DaCloud.available()) enterCloud();
+  else refresh();
   setInterval(() => {
     if (!document.hidden) refresh();
   }, 8000);
